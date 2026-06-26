@@ -41,6 +41,19 @@ async function slackApiGet(method, params) {
   return response.json();
 }
 
+// Відправка через response_url — завжди працює в каналі команди
+async function sendViaResponseUrl(responseUrl, blocks) {
+  const response = await fetch(responseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      response_type: 'in_channel',
+      blocks
+    })
+  });
+  return response.text();
+}
+
 async function getSlackUserName(userId) {
   try {
     const result = await slackApiGet('users.info', { user: userId });
@@ -54,7 +67,6 @@ async function getSlackUserName(userId) {
   return null;
 }
 
-// Форматуємо дату з YYYY-MM-DD в DD.MM.YYYY
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const [year, month, day] = dateStr.split('-');
@@ -73,8 +85,7 @@ app.post('/slack/commands', (req, res) => {
   res.status(200).send('');
   console.log('📩 Команда отримана');
 
-  const { trigger_id, channel_id, user_id } = req.body;
-  console.log('Channel ID:', channel_id);
+  const { trigger_id, channel_id, user_id, response_url } = req.body;
 
   getSlackUserName(user_id).then(fullName => {
     return slackApi('views.open', {
@@ -82,7 +93,8 @@ app.post('/slack/commands', (req, res) => {
       view: {
         type: 'modal',
         callback_id: 'defect_form',
-        private_metadata: JSON.stringify({ channel_id, manager_name: fullName }),
+        // Зберігаємо response_url щоб потім відправити в правильний канал
+        private_metadata: JSON.stringify({ channel_id, manager_name: fullName, response_url }),
         title: { type: 'plain_text', text: 'Новий брак' },
         submit: { type: 'plain_text', text: 'Відправити' },
         close: { type: 'plain_text', text: 'Скасувати' },
@@ -115,13 +127,10 @@ app.post('/slack/interactions', (req, res) => {
 
     const v = payload.view.state.values;
     const meta = JSON.parse(payload.view.private_metadata);
-    const channelId = meta.channel_id;
-    const managerName = meta.manager_name;
-
-    console.log('📋 Відправка форми, channel:', channelId);
+    const responseUrl = meta.response_url;
 
     const data = {
-      manager:          managerName || payload.user.name,
+      manager:          meta.manager_name || payload.user.name,
       date:             formatDate(v.date.date.selected_date),
       phone:            v.phone.phone.value,
       order_num:        v.order_num.order_num.value,
@@ -132,27 +141,24 @@ app.post('/slack/interactions', (req, res) => {
     };
 
     appendToSheet(data).then(newNumber => {
-      console.log('✅ Sheets записано, відправляємо в канал:', channelId);
-      return slackApi('chat.postMessage', {
-        channel: channelId,
-        text: '🔴 Новий брак зафіксовано',
-        blocks: [
-          { type: 'header', text: { type: 'plain_text', text: '🔴 Новий брак зафіксовано' } },
-          sectionField('🔢 № звернення', String(newNumber)),
-          sectionField('👤 Менеджер(-ка)', data.manager),
-          sectionField('📅 Дата звернення', data.date),
-          sectionField('📞 Телефон клієнта', data.phone),
-          sectionField('🧾 № замовлення', data.order_num),
-          sectionField('📦 Назва товару', data.product),
-          sectionField('🏷️ Артикул постачальника', data.supplier_article),
-          sectionField('⚠️ Опис дефекту', data.defect),
-          { type: 'divider' },
-          { type: 'context', elements: [{ type: 'mrkdwn', text: `Заповнив(ла): ${data.manager} · ${data.timestamp}` }] }
-        ]
-      });
+      const blocks = [
+        { type: 'header', text: { type: 'plain_text', text: '🔴 Новий брак зафіксовано' } },
+        sectionField('🔢 № звернення', String(newNumber)),
+        sectionField('👤 Менеджер(-ка)', data.manager),
+        sectionField('📅 Дата звернення', data.date),
+        sectionField('📞 Телефон клієнта', data.phone),
+        sectionField('🧾 № замовлення', data.order_num),
+        sectionField('📦 Назва товару', data.product),
+        sectionField('🏷️ Артикул постачальника', data.supplier_article),
+        sectionField('⚠️ Опис дефекту', data.defect),
+        { type: 'divider' },
+        { type: 'context', elements: [{ type: 'mrkdwn', text: `Заповнив(ла): ${data.manager} · ${data.timestamp}` }] }
+      ];
+
+      // Використовуємо response_url — завжди відправляє в канал команди
+      return sendViaResponseUrl(responseUrl, blocks);
     }).then(result => {
-      if (!result.ok) console.error('❌ Slack message error:', result.error);
-      else console.log('✅ Повідомлення відправлено в Slack');
+      console.log('✅ Повідомлення відправлено:', result);
     }).catch(err => console.error('❌ Помилка:', err.message));
 
   } else {
@@ -185,7 +191,6 @@ async function appendToSheet(data) {
 
   const newNumber = firstEmptyRow - 1;
 
-  // RAW_INPUT щоб дата не перетворювалась в число
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
     range: `БРАК!A${firstEmptyRow}:J${firstEmptyRow}`,
@@ -194,7 +199,7 @@ async function appendToSheet(data) {
       values: [[
         newNumber,
         data.manager,
-        data.date,            // вже у форматі DD.MM.YYYY
+        data.date,
         data.phone,
         data.order_num,
         data.product,
@@ -206,7 +211,7 @@ async function appendToSheet(data) {
     }
   });
 
-  // Копіюємо форматування з рядка 2 (перший рядок з даними, не заголовок)
+  // Копіюємо форматування з рядка 2 (перший рядок з даними)
   const sheetId = 1385128494;
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: process.env.SPREADSHEET_ID,
@@ -215,7 +220,7 @@ async function appendToSheet(data) {
         copyPaste: {
           source: {
             sheetId,
-            startRowIndex: 1, // рядок 2 (індекс з 0)
+            startRowIndex: 1,
             endRowIndex: 2,
             startColumnIndex: 0,
             endColumnIndex: 18
