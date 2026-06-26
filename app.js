@@ -80,9 +80,9 @@ app.post('/slack/commands', (req, res) => {
           { type: 'input', block_id: 'date', label: { type: 'plain_text', text: 'Дата звернення' }, element: { type: 'datepicker', action_id: 'date' } },
           { type: 'input', block_id: 'phone', label: { type: 'plain_text', text: 'Телефон клієнта' }, element: { type: 'plain_text_input', action_id: 'phone' } },
           { type: 'input', block_id: 'order_num', label: { type: 'plain_text', text: '№ замовлення' }, element: { type: 'plain_text_input', action_id: 'order_num' } },
-          { type: 'input', block_id: 'product', label: { type: 'plain_text', text: 'Назва товару (повна номенклатура + наш артикул)' }, element: { type: 'plain_text_input', action_id: 'product', multiline: true } },
+          { type: 'input', block_id: 'product', label: { type: 'plain_text', text: 'Назва товару (повна номенклатура)' }, element: { type: 'plain_text_input', action_id: 'product', multiline: true } },
           { type: 'input', block_id: 'lovespace_article', label: { type: 'plain_text', text: 'Артикул LOVESPACE' }, element: { type: 'plain_text_input', action_id: 'lovespace_article' }, optional: true },
-          { type: 'input', block_id: 'supplier_article', label: { type: 'plain_text', text: 'Артикул постачальника' }, element: { type: 'plain_text_input', action_id: 'supplier_article' } },
+          { type: 'input', block_id: 'supplier_article', label: { type: 'plain_text', text: 'Артикул постачальника (якщо немає, залиште "-")' }, element: { type: 'plain_text_input', action_id: 'supplier_article' } },
           { type: 'input', block_id: 'defect', label: { type: 'plain_text', text: 'Опис проблеми' }, element: { type: 'plain_text_input', action_id: 'defect', multiline: true } },
         ]
       }
@@ -143,7 +143,7 @@ app.post('/slack/interactions', (req, res) => {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Артикул LOVESPACE:* ${data.lovespace_article || '—'} | *Артикул постач:* ${data.supplier_article}\n*Опис проблеми:* ${data.defect}`
+              text: `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Арт. LS:* ${data.lovespace_article || '—'} | *Арт. постач:* ${data.supplier_article}\n*Опис проблеми:* ${data.defect}`
             }
           },
           {
