@@ -139,7 +139,7 @@ app.post('/slack/interactions', (req, res) => {
     appendToSheet(data).then(({ newNumber }) => {
       savedNumber = newNumber;
       // baseText — без статусу і емодзі, вони додаються при оновленні
-      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}\n*Товар:* ${data.product}\n*Арт LS:* ${data.lovespace_article || '—'} | *Арт постач:* ${data.supplier_article || '—'}\n*Проблема:* _${data.defect}_`;
+      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}\n*Товар:* ${data.product} (${data.lovespace_article || '—'} | ${data.supplier_article || '—'})\n*Проблема:* _${data.defect}_`;
       const initialStatus = 'Нова заявка';
       const initialEmoji = statusEmoji(initialStatus);
       // Повний текст: статус зверху, потім опис
