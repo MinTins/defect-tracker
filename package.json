@@ -1,0 +1,15 @@
+{
+  "name": "defect-tracker",
+  "version": "1.0.0",
+  "description": "Slack bot для обліку браку",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.17.0",
+    "googleapis": "^140.0.0",
+    "dotenv": "^16.4.0"
+  }
+}
