@@ -134,17 +134,18 @@ app.post('/slack/interactions', (req, res) => {
       timestamp:         new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' })
     };
 
-    appendToSheet(data).then(newNumber => {
+    let savedNumber;
+    let messageText;
+    appendToSheet(data).then(({ newNumber }) => {
+      savedNumber = newNumber;
+      messageText = `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Арт. LS:* ${data.lovespace_article || '—'} | *Арт. постач:* ${data.supplier_article || '—'}\n*Опис проблеми:* ${data.defect}`;
       return slackApi('chat.postMessage', {
         channel: channelId,
         text: `🔴 Брак #${newNumber}`,
         blocks: [
           {
             type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Арт. LS:* ${data.lovespace_article || '—'} | *Арт. постач:* ${data.supplier_article}\n*Опис проблеми:* ${data.defect}`
-            }
+            text: { type: 'mrkdwn', text: messageText }
           },
           {
             type: 'actions',
@@ -165,7 +166,15 @@ app.post('/slack/interactions', (req, res) => {
       });
     }).then(result => {
       if (!result.ok) console.error('❌ postMessage error:', result.error);
-      else console.log('✅ Повідомлення відправлено, ts:', result.ts);
+      else {
+        console.log('✅ Повідомлення відправлено, ts:', result.ts);
+        // Зберігаємо ts для подальшого оновлення статусу
+        messageMap.set(String(savedNumber), {
+          channel: channelId,
+          ts: result.ts,
+          text: messageText
+        });
+      }
     }).catch(err => console.error('❌ Помилка:', err.message));
 
   } else {
@@ -174,13 +183,17 @@ app.post('/slack/interactions', (req, res) => {
 });
 
 // ── 3. Запис у Google Sheets ─────────────────────────────────
-async function appendToSheet(data) {
+async function getSheets() {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets']
   });
-  const sheets = google.sheets({ version: 'v4', auth });
+  return google.sheets({ version: 'v4', auth });
+}
+
+async function appendToSheet(data) {
+  const sheets = await getSheets();
 
   const getRows = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SPREADSHEET_ID,
@@ -189,11 +202,11 @@ async function appendToSheet(data) {
 
   const rows = getRows.data.values || [];
 
-  // Знаходимо останній заповнений рядок і беремо його номер + 1
-  let lastFilledRow = 1; // починаємо з 1 (заголовок)
+  // Знаходимо останній заповнений рядок
+  let lastFilledRow = 1;
   for (let i = 1; i < rows.length; i++) {
     if (rows[i] && rows[i][0] && rows[i][0].toString().trim() !== '') {
-      lastFilledRow = i + 1; // +1 бо індекс з 0
+      lastFilledRow = i + 1;
     }
   }
 
@@ -203,24 +216,36 @@ async function appendToSheet(data) {
 
   // Структура колонок:
   // A: № звернення  B: Менеджер  C: Дата  D: Телефон  E: № замовлення
-  // F: Назва товару  G: Артикул LOVESPACE  H: (порожня)  I: Артикул постач  J: Опис проблеми  K: Статус
+  // F: Назва товару  G: Артикул LOVESPACE  H: (не чіпаємо — dropdown)
+  // I: Артикул постач  J: Опис проблеми  K: Статус
+
+  // Записуємо A-G окремо від I-K, щоб не чіпати H з dropdown
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `БРАК!A${newRow}:K${newRow}`,
+    range: `БРАК!A${newRow}:G${newRow}`,
     valueInputOption: 'RAW',
     resource: {
       values: [[
-        newNumber,               // A: № звернення
-        data.manager,            // B: Менеджер(-ка)
-        data.date,               // C: Дата звернення
-        data.phone,              // D: Телефон клієнта
-        data.order_num,          // E: № замовлення
-        data.product,            // F: Назва товару
-        data.lovespace_article,  // G: Артикул LOVESPACE
-        '',                      // H: порожня (без змін)
-        data.supplier_article,   // I: Артикул постачальника
-        data.defect,             // J: Опис проблеми
-        'Нова заявка',           // K: Статус
+        newNumber,
+        data.manager,
+        data.date,
+        data.phone,
+        data.order_num,
+        data.product,
+        data.lovespace_article || '',
+      ]]
+    }
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: `БРАК!I${newRow}:K${newRow}`,
+    valueInputOption: 'RAW',
+    resource: {
+      values: [[
+        data.supplier_article || '',
+        data.defect,
+        'Нова заявка',
       ]]
     }
   });
@@ -241,8 +266,57 @@ async function appendToSheet(data) {
   });
 
   console.log(`✅ Записано рядок ${newRow}, № звернення: ${newNumber}`);
-  return newNumber;
+  return { newNumber, newRow };
 }
+
+// ── 4. Webhook від Google Apps Script (зміна статусу) ────────
+// Зберігаємо map: номер звернення -> { channel, ts }
+const messageMap = new Map();
+
+app.post('/slack/status-update', async (req, res) => {
+  res.status(200).send('ok');
+  const { number, status } = req.body;
+  console.log(`📊 Оновлення статусу: #${number} -> ${status}`);
+
+  const msg = messageMap.get(String(number));
+  if (!msg) {
+    console.log(`ℹ️ Повідомлення для #${number} не знайдено в пам'яті`);
+    return;
+  }
+
+  // Оновлюємо повідомлення в Slack — додаємо статус
+  const { channel, ts, text } = msg;
+  await slackApi('chat.update', {
+    channel,
+    ts,
+    text: `🔴 Брак #${number}`,
+    blocks: [
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `${text}
+*Статус:* ${status}` }
+      },
+      {
+        type: 'actions',
+        elements: [{
+          type: 'button',
+          text: { type: 'plain_text', text: '🗑 Видалити' },
+          style: 'danger',
+          action_id: 'delete_message',
+          confirm: {
+            title: { type: 'plain_text', text: 'Видалити повідомлення?' },
+            text: { type: 'plain_text', text: 'Запис в таблиці залишиться.' },
+            confirm: { type: 'plain_text', text: 'Видалити' },
+            deny: { type: 'plain_text', text: 'Скасувати' }
+          }
+        }]
+      }
+    ]
+  }).then(r => {
+    if (!r.ok) console.error('❌ chat.update error:', r.error);
+    else console.log(`✅ Статус оновлено в Slack для #${number}`);
+  });
+});
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`✅ Defect Tracker запущено на порту ${PORT}`));
