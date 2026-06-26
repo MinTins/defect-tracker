@@ -138,15 +138,19 @@ app.post('/slack/interactions', (req, res) => {
     let messageText;
     appendToSheet(data).then(({ newNumber }) => {
       savedNumber = newNumber;
-      // baseText — без статусу, статус додається окремо зверху
+      // baseText — без статусу і емодзі, вони додаються при оновленні
       messageText = `*Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Замовл:* ${data.order_num} | *Тел:* ${data.phone}\n*Товар:* ${data.product}\n*Арт. LS:* ${data.lovespace_article || '—'} | *Арт. постач:* ${data.supplier_article || '—'}\n*Опис проблеми:* ${data.defect}`;
+      const initialStatus = 'Нова заявка';
+      const initialEmoji = statusEmoji(initialStatus);
+      // Повний текст: статус зверху, потім опис
+      const fullText = `${initialEmoji} *[${initialStatus}]*\n${messageText}`;
       return slackApi('chat.postMessage', {
         channel: channelId,
-        text: `🔴 Брак #${newNumber}`,  // fallback
+        text: `${initialEmoji} [${initialStatus}] Брак #${newNumber}`,
         blocks: [
           {
             type: 'section',
-            text: { type: 'mrkdwn', text: messageText }
+            text: { type: 'mrkdwn', text: fullText }
           },
           {
             type: 'actions',
@@ -370,14 +374,16 @@ app.post('/slack/status-update', async (req, res) => {
   // Оновлюємо повідомлення в Slack — статус зверху з кольоровим емодзі
   const { channel, ts, text } = msg;
   const emoji = statusEmoji(status);
+  // Статус і емодзі першим рядком, потім деталі заявки
+  const updatedText = `${emoji} *[${status}]*\n${text}`;
   await slackApi('chat.update', {
     channel,
     ts,
-    text: `${emoji} Брак #${number}`,
+    text: `${emoji} [${status}] Брак #${number}`,
     blocks: [
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: `${emoji} ${text}` }
+        text: { type: 'mrkdwn', text: updatedText }
       },
       {
         type: 'actions',
