@@ -63,7 +63,7 @@ function formatDate(dateStr) {
 app.post('/slack/commands', (req, res) => {
   res.status(200).send('');
 
-  const { trigger_id, channel_id, user_id, response_url } = req.body;
+  const { trigger_id, channel_id, user_id } = req.body;
 
   getSlackUserName(user_id).then(fullName => {
     return slackApi('views.open', {
@@ -71,7 +71,7 @@ app.post('/slack/commands', (req, res) => {
       view: {
         type: 'modal',
         callback_id: 'defect_form',
-        private_metadata: JSON.stringify({ channel_id, manager_name: fullName, response_url }),
+        private_metadata: JSON.stringify({ channel_id, manager_name: fullName }),
         title: { type: 'plain_text', text: 'Новий брак' },
         submit: { type: 'plain_text', text: 'Відправити' },
         close: { type: 'plain_text', text: 'Скасувати' },
@@ -91,34 +91,7 @@ app.post('/slack/commands', (req, res) => {
   }).catch(err => console.error('❌ Помилка:', err.message));
 });
 
-// ── 2. Команда /delete ───────────────────────────────────────
-app.post('/slack/delete', (req, res) => {
-  res.status(200).send('');
-
-  const { channel_id, user_id } = req.body;
-
-  // Шукаємо останнє повідомлення бота в каналі
-  slackApiGet('conversations.history', { channel: channel_id, limit: '20' }).then(result => {
-    if (!result.ok) {
-      console.error('❌ history error:', result.error);
-      return;
-    }
-    const botMessage = result.messages.find(m => m.bot_id && m.blocks);
-    if (!botMessage) {
-      console.log('ℹ️ Повідомлень бота не знайдено');
-      return;
-    }
-    return slackApi('chat.delete', {
-      channel: channel_id,
-      ts: botMessage.ts
-    });
-  }).then(result => {
-    if (result && !result.ok) console.error('❌ delete error:', result.error);
-    else if (result) console.log('✅ Повідомлення видалено');
-  }).catch(err => console.error('❌ Помилка:', err.message));
-});
-
-// ── 3. Обробка інтерактивних кнопок ─────────────────────────
+// ── 2. Обробка форми та кнопок ───────────────────────────────
 app.post('/slack/interactions', (req, res) => {
   const payload = JSON.parse(req.body.payload);
 
@@ -132,10 +105,12 @@ app.post('/slack/interactions', (req, res) => {
         ts: payload.message.ts
       }).then(result => {
         if (!result.ok) console.error('❌ delete error:', result.error);
-        else console.log('✅ Повідомлення видалено кнопкою');
+        else console.log('✅ Повідомлення видалено');
       });
-      return;
+    } else {
+      res.status(200).send('');
     }
+    return;
   }
 
   // Відправка форми
@@ -144,7 +119,7 @@ app.post('/slack/interactions', (req, res) => {
 
     const v = payload.view.state.values;
     const meta = JSON.parse(payload.view.private_metadata);
-    const responseUrl = meta.response_url;
+    const channelId = meta.channel_id;
 
     const data = {
       manager:          meta.manager_name || payload.user.name,
@@ -158,47 +133,45 @@ app.post('/slack/interactions', (req, res) => {
     };
 
     appendToSheet(data).then(newNumber => {
-      // Стисле повідомлення з кнопкою видалення
-      const blocks = [
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Артикул постач:* ${data.supplier_article}\n*Дефект:* ${data.defect}`
-          }
-        },
-        {
-          type: 'actions',
-          elements: [{
-            type: 'button',
-            text: { type: 'plain_text', text: '🗑 Видалити' },
-            style: 'danger',
-            action_id: 'delete_message',
-            confirm: {
-              title: { type: 'plain_text', text: 'Видалити повідомлення?' },
-              text: { type: 'plain_text', text: 'Повідомлення буде видалено з чату, але запис в таблиці залишиться.' },
-              confirm: { type: 'plain_text', text: 'Видалити' },
-              deny: { type: 'plain_text', text: 'Скасувати' }
+      return slackApi('chat.postMessage', {
+        channel: channelId,
+        text: `🔴 Брак #${newNumber}`,
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Артикул постач:* ${data.supplier_article}\n*Дефект:* ${data.defect}`
             }
-          }]
-        }
-      ];
-
-      return fetch(responseUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ response_type: 'in_channel', blocks })
+          },
+          {
+            type: 'actions',
+            elements: [{
+              type: 'button',
+              text: { type: 'plain_text', text: '🗑 Видалити' },
+              style: 'danger',
+              action_id: 'delete_message',
+              confirm: {
+                title: { type: 'plain_text', text: 'Видалити повідомлення?' },
+                text: { type: 'plain_text', text: 'Запис в таблиці залишиться.' },
+                confirm: { type: 'plain_text', text: 'Видалити' },
+                deny: { type: 'plain_text', text: 'Скасувати' }
+              }
+            }]
+          }
+        ]
       });
-    }).then(() => {
-      console.log('✅ Повідомлення відправлено');
+    }).then(result => {
+      if (!result.ok) console.error('❌ postMessage error:', result.error);
+      else console.log('✅ Повідомлення відправлено, ts:', result.ts);
     }).catch(err => console.error('❌ Помилка:', err.message));
 
-  } else if (payload.type !== 'block_actions') {
+  } else {
     res.status(200).send('');
   }
 });
 
-// ── 4. Запис у Google Sheets ─────────────────────────────────
+// ── 3. Запис у Google Sheets ─────────────────────────────────
 async function appendToSheet(data) {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   const auth = new google.auth.GoogleAuth({
