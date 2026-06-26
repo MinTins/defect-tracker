@@ -4,11 +4,10 @@
   "description": "Slack bot для обліку браку",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js"
+    "start": "node app.js"
   },
   "dependencies": {
-    "@slack/bolt": "^3.17.0",
+    "express": "^4.18.2",
     "googleapis": "^140.0.0",
     "dotenv": "^16.4.0"
   }
