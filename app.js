@@ -41,26 +41,12 @@ async function slackApiGet(method, params) {
   return response.json();
 }
 
-// Відправка через response_url — завжди працює в каналі команди
-async function sendViaResponseUrl(responseUrl, blocks) {
-  const response = await fetch(responseUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      response_type: 'in_channel',
-      blocks
-    })
-  });
-  return response.text();
-}
-
 async function getSlackUserName(userId) {
   try {
     const result = await slackApiGet('users.info', { user: userId });
     if (result.ok) {
       return result.user.profile.real_name || result.user.real_name || result.user.name;
     }
-    console.error('❌ users.info error:', result.error);
   } catch (e) {
     console.error('❌ Помилка отримання імені:', e.message);
   }
@@ -73,17 +59,9 @@ function formatDate(dateStr) {
   return `${day}.${month}.${year}`;
 }
 
-function sectionField(label, value) {
-  return {
-    type: 'section',
-    text: { type: 'mrkdwn', text: `*${label}:*\n${value || '—'}` }
-  };
-}
-
 // ── 1. Команда /create ───────────────────────────────────────
 app.post('/slack/commands', (req, res) => {
   res.status(200).send('');
-  console.log('📩 Команда отримана');
 
   const { trigger_id, channel_id, user_id, response_url } = req.body;
 
@@ -93,16 +71,12 @@ app.post('/slack/commands', (req, res) => {
       view: {
         type: 'modal',
         callback_id: 'defect_form',
-        // Зберігаємо response_url щоб потім відправити в правильний канал
         private_metadata: JSON.stringify({ channel_id, manager_name: fullName, response_url }),
         title: { type: 'plain_text', text: 'Новий брак' },
         submit: { type: 'plain_text', text: 'Відправити' },
         close: { type: 'plain_text', text: 'Скасувати' },
         blocks: [
-          {
-            type: 'section',
-            text: { type: 'mrkdwn', text: `👤 *Менеджер(-ка):* ${fullName || 'невідомо'}` }
-          },
+          { type: 'section', text: { type: 'mrkdwn', text: `👤 *Менеджер(-ка):* ${fullName || 'невідомо'}` } },
           { type: 'input', block_id: 'date', label: { type: 'plain_text', text: 'Дата звернення' }, element: { type: 'datepicker', action_id: 'date' } },
           { type: 'input', block_id: 'phone', label: { type: 'plain_text', text: 'Телефон клієнта' }, element: { type: 'plain_text_input', action_id: 'phone' } },
           { type: 'input', block_id: 'order_num', label: { type: 'plain_text', text: '№ замовлення' }, element: { type: 'plain_text_input', action_id: 'order_num' } },
@@ -114,14 +88,57 @@ app.post('/slack/commands', (req, res) => {
     });
   }).then(result => {
     if (!result.ok) console.error('❌ Modal error:', result.error);
-    else console.log('✅ Modal відкрито');
   }).catch(err => console.error('❌ Помилка:', err.message));
 });
 
-// ── 2. Відправка форми ───────────────────────────────────────
+// ── 2. Команда /delete ───────────────────────────────────────
+app.post('/slack/delete', (req, res) => {
+  res.status(200).send('');
+
+  const { channel_id, user_id } = req.body;
+
+  // Шукаємо останнє повідомлення бота в каналі
+  slackApiGet('conversations.history', { channel: channel_id, limit: '20' }).then(result => {
+    if (!result.ok) {
+      console.error('❌ history error:', result.error);
+      return;
+    }
+    const botMessage = result.messages.find(m => m.bot_id && m.blocks);
+    if (!botMessage) {
+      console.log('ℹ️ Повідомлень бота не знайдено');
+      return;
+    }
+    return slackApi('chat.delete', {
+      channel: channel_id,
+      ts: botMessage.ts
+    });
+  }).then(result => {
+    if (result && !result.ok) console.error('❌ delete error:', result.error);
+    else if (result) console.log('✅ Повідомлення видалено');
+  }).catch(err => console.error('❌ Помилка:', err.message));
+});
+
+// ── 3. Обробка інтерактивних кнопок ─────────────────────────
 app.post('/slack/interactions', (req, res) => {
   const payload = JSON.parse(req.body.payload);
 
+  // Кнопка "Видалити"
+  if (payload.type === 'block_actions') {
+    const action = payload.actions[0];
+    if (action.action_id === 'delete_message') {
+      res.status(200).send('');
+      slackApi('chat.delete', {
+        channel: payload.channel.id,
+        ts: payload.message.ts
+      }).then(result => {
+        if (!result.ok) console.error('❌ delete error:', result.error);
+        else console.log('✅ Повідомлення видалено кнопкою');
+      });
+      return;
+    }
+  }
+
+  // Відправка форми
   if (payload.type === 'view_submission' && payload.view.callback_id === 'defect_form') {
     res.status(200).json({ response_action: 'clear' });
 
@@ -141,32 +158,47 @@ app.post('/slack/interactions', (req, res) => {
     };
 
     appendToSheet(data).then(newNumber => {
+      // Стисле повідомлення з кнопкою видалення
       const blocks = [
-        { type: 'header', text: { type: 'plain_text', text: '🔴 Новий брак зафіксовано' } },
-        sectionField('🔢 № звернення', String(newNumber)),
-        sectionField('👤 Менеджер(-ка)', data.manager),
-        sectionField('📅 Дата звернення', data.date),
-        sectionField('📞 Телефон клієнта', data.phone),
-        sectionField('🧾 № замовлення', data.order_num),
-        sectionField('📦 Назва товару', data.product),
-        sectionField('🏷️ Артикул постачальника', data.supplier_article),
-        sectionField('⚠️ Опис дефекту', data.defect),
-        { type: 'divider' },
-        { type: 'context', elements: [{ type: 'mrkdwn', text: `Заповнив(ла): ${data.manager} · ${data.timestamp}` }] }
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Артикул постач:* ${data.supplier_article}\n*Дефект:* ${data.defect}`
+          }
+        },
+        {
+          type: 'actions',
+          elements: [{
+            type: 'button',
+            text: { type: 'plain_text', text: '🗑 Видалити' },
+            style: 'danger',
+            action_id: 'delete_message',
+            confirm: {
+              title: { type: 'plain_text', text: 'Видалити повідомлення?' },
+              text: { type: 'plain_text', text: 'Повідомлення буде видалено з чату, але запис в таблиці залишиться.' },
+              confirm: { type: 'plain_text', text: 'Видалити' },
+              deny: { type: 'plain_text', text: 'Скасувати' }
+            }
+          }]
+        }
       ];
 
-      // Використовуємо response_url — завжди відправляє в канал команди
-      return sendViaResponseUrl(responseUrl, blocks);
-    }).then(result => {
-      console.log('✅ Повідомлення відправлено:', result);
+      return fetch(responseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response_type: 'in_channel', blocks })
+      });
+    }).then(() => {
+      console.log('✅ Повідомлення відправлено');
     }).catch(err => console.error('❌ Помилка:', err.message));
 
-  } else {
+  } else if (payload.type !== 'block_actions') {
     res.status(200).send('');
   }
 });
 
-// ── 3. Запис у Google Sheets ─────────────────────────────────
+// ── 4. Запис у Google Sheets ─────────────────────────────────
 async function appendToSheet(data) {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   const auth = new google.auth.GoogleAuth({
@@ -197,48 +229,28 @@ async function appendToSheet(data) {
     valueInputOption: 'RAW',
     resource: {
       values: [[
-        newNumber,
-        data.manager,
-        data.date,
-        data.phone,
-        data.order_num,
-        data.product,
-        '',
-        data.supplier_article,
-        data.defect,
-        'Нова заявка',
+        newNumber, data.manager, data.date, data.phone,
+        data.order_num, data.product, '', data.supplier_article,
+        data.defect, 'Нова заявка',
       ]]
     }
   });
 
-  // Копіюємо форматування з рядка 2 (перший рядок з даними)
   const sheetId = 1385128494;
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: process.env.SPREADSHEET_ID,
     resource: {
       requests: [{
         copyPaste: {
-          source: {
-            sheetId,
-            startRowIndex: 1,
-            endRowIndex: 2,
-            startColumnIndex: 0,
-            endColumnIndex: 18
-          },
-          destination: {
-            sheetId,
-            startRowIndex: firstEmptyRow - 1,
-            endRowIndex: firstEmptyRow,
-            startColumnIndex: 0,
-            endColumnIndex: 18
-          },
+          source: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 18 },
+          destination: { sheetId, startRowIndex: firstEmptyRow - 1, endRowIndex: firstEmptyRow, startColumnIndex: 0, endColumnIndex: 18 },
           pasteType: 'PASTE_FORMAT'
         }
       }]
     }
   });
 
-  console.log(`✅ Записано в рядок ${firstEmptyRow}, № звернення: ${newNumber}`);
+  console.log(`✅ Записано рядок ${firstEmptyRow}, № ${newNumber}`);
   return newNumber;
 }
 
