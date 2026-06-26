@@ -81,8 +81,9 @@ app.post('/slack/commands', (req, res) => {
           { type: 'input', block_id: 'phone', label: { type: 'plain_text', text: 'Телефон клієнта' }, element: { type: 'plain_text_input', action_id: 'phone' } },
           { type: 'input', block_id: 'order_num', label: { type: 'plain_text', text: '№ замовлення' }, element: { type: 'plain_text_input', action_id: 'order_num' } },
           { type: 'input', block_id: 'product', label: { type: 'plain_text', text: 'Назва товару (повна номенклатура + наш артикул)' }, element: { type: 'plain_text_input', action_id: 'product', multiline: true } },
+          { type: 'input', block_id: 'lovespace_article', label: { type: 'plain_text', text: 'Артикул LOVESPACE' }, element: { type: 'plain_text_input', action_id: 'lovespace_article' }, optional: true },
           { type: 'input', block_id: 'supplier_article', label: { type: 'plain_text', text: 'Артикул постачальника' }, element: { type: 'plain_text_input', action_id: 'supplier_article' } },
-          { type: 'input', block_id: 'defect', label: { type: 'plain_text', text: 'Опис дефекту' }, element: { type: 'plain_text_input', action_id: 'defect', multiline: true } },
+          { type: 'input', block_id: 'defect', label: { type: 'plain_text', text: 'Опис проблеми' }, element: { type: 'plain_text_input', action_id: 'defect', multiline: true } },
         ]
       }
     });
@@ -122,14 +123,15 @@ app.post('/slack/interactions', (req, res) => {
     const channelId = meta.channel_id;
 
     const data = {
-      manager:          meta.manager_name || payload.user.name,
-      date:             formatDate(v.date.date.selected_date),
-      phone:            v.phone.phone.value,
-      order_num:        v.order_num.order_num.value,
-      product:          v.product.product.value,
-      supplier_article: v.supplier_article.supplier_article.value,
-      defect:           v.defect.defect.value,
-      timestamp:        new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' })
+      manager:           meta.manager_name || payload.user.name,
+      date:              formatDate(v.date.date.selected_date),
+      phone:             v.phone.phone.value,
+      order_num:         v.order_num.order_num.value,
+      product:           v.product.product.value,
+      lovespace_article: v.lovespace_article.lovespace_article.value || '',
+      supplier_article:  v.supplier_article.supplier_article.value,
+      defect:            v.defect.defect.value,
+      timestamp:         new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' })
     };
 
     appendToSheet(data).then(newNumber => {
@@ -141,7 +143,7 @@ app.post('/slack/interactions', (req, res) => {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Артикул постач:* ${data.supplier_article}\n*Дефект:* ${data.defect}`
+              text: `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Артикул LOVESPACE:* ${data.lovespace_article || '—'} | *Артикул постач:* ${data.supplier_article}\n*Опис проблеми:* ${data.defect}`
             }
           },
           {
@@ -186,29 +188,44 @@ async function appendToSheet(data) {
   });
 
   const rows = getRows.data.values || [];
-  let firstEmptyRow = rows.length + 1;
+
+  // Знаходимо останній заповнений рядок і беремо його номер + 1
+  let lastFilledRow = 1; // починаємо з 1 (заголовок)
   for (let i = 1; i < rows.length; i++) {
-    if (!rows[i] || !rows[i][0] || rows[i][0].toString().trim() === '') {
-      firstEmptyRow = i + 1;
-      break;
+    if (rows[i] && rows[i][0] && rows[i][0].toString().trim() !== '') {
+      lastFilledRow = i + 1; // +1 бо індекс з 0
     }
   }
 
-  const newNumber = firstEmptyRow - 1;
+  const newRow = lastFilledRow + 1;
+  const lastNumber = parseInt(rows[lastFilledRow - 1]?.[0]) || 0;
+  const newNumber = lastNumber + 1;
 
+  // Структура колонок:
+  // A: № звернення  B: Менеджер  C: Дата  D: Телефон  E: № замовлення
+  // F: Назва товару  G: Артикул LOVESPACE  H: (порожня)  I: Артикул постач  J: Опис проблеми  K: Статус
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `БРАК!A${firstEmptyRow}:J${firstEmptyRow}`,
+    range: `БРАК!A${newRow}:K${newRow}`,
     valueInputOption: 'RAW',
     resource: {
       values: [[
-        newNumber, data.manager, data.date, data.phone,
-        data.order_num, data.product, '', data.supplier_article,
-        data.defect, 'Нова заявка',
+        newNumber,               // A: № звернення
+        data.manager,            // B: Менеджер(-ка)
+        data.date,               // C: Дата звернення
+        data.phone,              // D: Телефон клієнта
+        data.order_num,          // E: № замовлення
+        data.product,            // F: Назва товару
+        data.lovespace_article,  // G: Артикул LOVESPACE
+        '',                      // H: порожня (без змін)
+        data.supplier_article,   // I: Артикул постачальника
+        data.defect,             // J: Опис проблеми
+        'Нова заявка',           // K: Статус
       ]]
     }
   });
 
+  // Копіюємо форматування з рядка 2
   const sheetId = 1385128494;
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: process.env.SPREADSHEET_ID,
@@ -216,14 +233,14 @@ async function appendToSheet(data) {
       requests: [{
         copyPaste: {
           source: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 18 },
-          destination: { sheetId, startRowIndex: firstEmptyRow - 1, endRowIndex: firstEmptyRow, startColumnIndex: 0, endColumnIndex: 18 },
+          destination: { sheetId, startRowIndex: newRow - 1, endRowIndex: newRow, startColumnIndex: 0, endColumnIndex: 18 },
           pasteType: 'PASTE_FORMAT'
         }
       }]
     }
   });
 
-  console.log(`✅ Записано рядок ${firstEmptyRow}, № ${newNumber}`);
+  console.log(`✅ Записано рядок ${newRow}, № звернення: ${newNumber}`);
   return newNumber;
 }
 
