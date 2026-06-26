@@ -4,7 +4,6 @@ require('dotenv').config();
 
 const app = express();
 
-// ── Парсинг тіла запиту ──────────────────────────────────────
 app.use((req, res, next) => {
   let data = '';
   req.on('data', chunk => { data += chunk; });
@@ -19,10 +18,8 @@ app.use((req, res, next) => {
   });
 });
 
-// ── Health check ─────────────────────────────────────────────
 app.get('/', (req, res) => res.send('✅ Defect Tracker працює!'));
 
-// ── Slack API POST helper ────────────────────────────────────
 async function slackApi(method, body) {
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: 'POST',
@@ -35,7 +32,6 @@ async function slackApi(method, body) {
   return response.json();
 }
 
-// ── Slack API GET helper ─────────────────────────────────────
 async function slackApiGet(method, params) {
   const url = new URL(`https://slack.com/api/${method}`);
   Object.entries(params).forEach(([k, v]) => url.searchParams.append(k, v));
@@ -45,12 +41,9 @@ async function slackApiGet(method, params) {
   return response.json();
 }
 
-// ── Отримати Full Name користувача зі Slack ──────────────────
 async function getSlackUserName(userId) {
   try {
-    console.log('🔍 Отримуємо профіль для userId:', userId);
     const result = await slackApiGet('users.info', { user: userId });
-    console.log('👤 users.info result:', JSON.stringify(result));
     if (result.ok) {
       return result.user.profile.real_name || result.user.real_name || result.user.name;
     }
@@ -59,6 +52,13 @@ async function getSlackUserName(userId) {
     console.error('❌ Помилка отримання імені:', e.message);
   }
   return null;
+}
+
+// Форматуємо дату з YYYY-MM-DD в DD.MM.YYYY
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-');
+  return `${day}.${month}.${year}`;
 }
 
 function sectionField(label, value) {
@@ -74,6 +74,7 @@ app.post('/slack/commands', (req, res) => {
   console.log('📩 Команда отримана');
 
   const { trigger_id, channel_id, user_id } = req.body;
+  console.log('Channel ID:', channel_id);
 
   getSlackUserName(user_id).then(fullName => {
     return slackApi('views.open', {
@@ -117,9 +118,11 @@ app.post('/slack/interactions', (req, res) => {
     const channelId = meta.channel_id;
     const managerName = meta.manager_name;
 
+    console.log('📋 Відправка форми, channel:', channelId);
+
     const data = {
       manager:          managerName || payload.user.name,
-      date:             v.date.date.selected_date,
+      date:             formatDate(v.date.date.selected_date),
       phone:            v.phone.phone.value,
       order_num:        v.order_num.order_num.value,
       product:          v.product.product.value,
@@ -129,6 +132,7 @@ app.post('/slack/interactions', (req, res) => {
     };
 
     appendToSheet(data).then(newNumber => {
+      console.log('✅ Sheets записано, відправляємо в канал:', channelId);
       return slackApi('chat.postMessage', {
         channel: channelId,
         text: '🔴 Новий брак зафіксовано',
@@ -181,15 +185,16 @@ async function appendToSheet(data) {
 
   const newNumber = firstEmptyRow - 1;
 
+  // RAW_INPUT щоб дата не перетворювалась в число
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
     range: `БРАК!A${firstEmptyRow}:J${firstEmptyRow}`,
-    valueInputOption: 'USER_ENTERED',
+    valueInputOption: 'RAW',
     resource: {
       values: [[
         newNumber,
         data.manager,
-        data.date,
+        data.date,            // вже у форматі DD.MM.YYYY
         data.phone,
         data.order_num,
         data.product,
@@ -201,15 +206,27 @@ async function appendToSheet(data) {
     }
   });
 
-  // Копіюємо форматування з попереднього рядка
+  // Копіюємо форматування з рядка 2 (перший рядок з даними, не заголовок)
   const sheetId = 1385128494;
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: process.env.SPREADSHEET_ID,
     resource: {
       requests: [{
         copyPaste: {
-          source: { sheetId, startRowIndex: firstEmptyRow - 2, endRowIndex: firstEmptyRow - 1, startColumnIndex: 0, endColumnIndex: 18 },
-          destination: { sheetId, startRowIndex: firstEmptyRow - 1, endRowIndex: firstEmptyRow, startColumnIndex: 0, endColumnIndex: 18 },
+          source: {
+            sheetId,
+            startRowIndex: 1, // рядок 2 (індекс з 0)
+            endRowIndex: 2,
+            startColumnIndex: 0,
+            endColumnIndex: 18
+          },
+          destination: {
+            sheetId,
+            startRowIndex: firstEmptyRow - 1,
+            endRowIndex: firstEmptyRow,
+            startColumnIndex: 0,
+            endColumnIndex: 18
+          },
           pasteType: 'PASTE_FORMAT'
         }
       }]
@@ -220,6 +237,5 @@ async function appendToSheet(data) {
   return newNumber;
 }
 
-// ── Запуск ───────────────────────────────────────────────────
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`✅ Defect Tracker запущено на порту ${PORT}`));
