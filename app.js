@@ -22,7 +22,7 @@ app.use((req, res, next) => {
 // ── Health check ─────────────────────────────────────────────
 app.get('/', (req, res) => res.send('✅ Defect Tracker працює!'));
 
-// ── Slack API helper ─────────────────────────────────────────
+// ── Slack API POST helper ────────────────────────────────────
 async function slackApi(method, body) {
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: 'POST',
@@ -35,11 +35,21 @@ async function slackApi(method, body) {
   return response.json();
 }
 
+// ── Slack API GET helper ─────────────────────────────────────
+async function slackApiGet(method, params) {
+  const url = new URL(`https://slack.com/api/${method}`);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.append(k, v));
+  const response = await fetch(url.toString(), {
+    headers: { 'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}` }
+  });
+  return response.json();
+}
+
 // ── Отримати Full Name користувача зі Slack ──────────────────
 async function getSlackUserName(userId) {
   try {
     console.log('🔍 Отримуємо профіль для userId:', userId);
-    const result = await slackApi('users.info', { user: userId });
+    const result = await slackApiGet('users.info', { user: userId });
     console.log('👤 users.info result:', JSON.stringify(result));
     if (result.ok) {
       return result.user.profile.real_name || result.user.real_name || result.user.name;
@@ -65,7 +75,6 @@ app.post('/slack/commands', (req, res) => {
 
   const { trigger_id, channel_id, user_id } = req.body;
 
-  // Отримуємо ім'я користувача і передаємо в metadata
   getSlackUserName(user_id).then(fullName => {
     return slackApi('views.open', {
       trigger_id,
@@ -119,7 +128,6 @@ app.post('/slack/interactions', (req, res) => {
       timestamp:        new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' })
     };
 
-    // Спочатку записуємо в Sheets, щоб отримати № звернення
     appendToSheet(data).then(newNumber => {
       return slackApi('chat.postMessage', {
         channel: channelId,
@@ -157,66 +165,51 @@ async function appendToSheet(data) {
   });
   const sheets = google.sheets({ version: 'v4', auth });
 
-  // Знаходимо перший порожній рядок у колонці A
   const getRows = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SPREADSHEET_ID,
     range: 'БРАК!A:A',
   });
 
   const rows = getRows.data.values || [];
-  // Шукаємо перший рядок де A порожня (після заголовка)
   let firstEmptyRow = rows.length + 1;
   for (let i = 1; i < rows.length; i++) {
     if (!rows[i] || !rows[i][0] || rows[i][0].toString().trim() === '') {
-      firstEmptyRow = i + 1; // +1 бо Google Sheets рядки з 1
+      firstEmptyRow = i + 1;
       break;
     }
   }
 
-  const newNumber = firstEmptyRow - 1; // № звернення = номер рядка - заголовок
+  const newNumber = firstEmptyRow - 1;
 
-  // Записуємо дані
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
     range: `БРАК!A${firstEmptyRow}:J${firstEmptyRow}`,
     valueInputOption: 'USER_ENTERED',
     resource: {
       values: [[
-        newNumber,            // A: № звернення
-        data.manager,         // B: Менеджер(-ка)
-        data.date,            // C: Дата звернення
-        data.phone,           // D: Телефон клієнта
-        data.order_num,       // E: № замовлення
-        data.product,         // F: Назва товару
-        '',                   // G: порожня
-        data.supplier_article,// H: Артикул постачальника
-        data.defect,          // I: Опис дефекту
-        'Нова заявка',        // J: Статус
+        newNumber,
+        data.manager,
+        data.date,
+        data.phone,
+        data.order_num,
+        data.product,
+        '',
+        data.supplier_article,
+        data.defect,
+        'Нова заявка',
       ]]
     }
   });
 
   // Копіюємо форматування з попереднього рядка
-  const sheetId = 1385128494; // gid аркуша БРАК
+  const sheetId = 1385128494;
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: process.env.SPREADSHEET_ID,
     resource: {
       requests: [{
         copyPaste: {
-          source: {
-            sheetId,
-            startRowIndex: firstEmptyRow - 2,
-            endRowIndex: firstEmptyRow - 1,
-            startColumnIndex: 0,
-            endColumnIndex: 18
-          },
-          destination: {
-            sheetId,
-            startRowIndex: firstEmptyRow - 1,
-            endRowIndex: firstEmptyRow,
-            startColumnIndex: 0,
-            endColumnIndex: 18
-          },
+          source: { sheetId, startRowIndex: firstEmptyRow - 2, endRowIndex: firstEmptyRow - 1, startColumnIndex: 0, endColumnIndex: 18 },
+          destination: { sheetId, startRowIndex: firstEmptyRow - 1, endRowIndex: firstEmptyRow, startColumnIndex: 0, endColumnIndex: 18 },
           pasteType: 'PASTE_FORMAT'
         }
       }]
