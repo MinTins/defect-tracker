@@ -175,6 +175,8 @@ app.post('/slack/interactions', (req, res) => {
           ts: result.ts,
           text: messageText
         });
+        // Зберігаємо в Google Sheets для відновлення після перезапуску
+        saveMessageToSheet(savedNumber, channelId, result.ts, messageText);
       }
     }).catch(err => console.error('❌ Помилка:', err.message));
 
@@ -191,6 +193,71 @@ async function getSheets() {
     scopes: ['https://www.googleapis.com/auth/spreadsheets']
   });
   return google.sheets({ version: 'v4', auth });
+}
+
+// ── Збереження/завантаження messageMap з Google Sheets ───────
+const MSG_SHEET = '_bot_messages';
+
+async function ensureMsgSheet(sheets) {
+  try {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: process.env.SPREADSHEET_ID });
+    const exists = meta.data.sheets.some(s => s.properties.title === MSG_SHEET);
+    if (!exists) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        resource: {
+          requests: [{
+            addSheet: { properties: { title: MSG_SHEET, hidden: true } }
+          }]
+        }
+      });
+      // Додаємо заголовки
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: `${MSG_SHEET}!A1:D1`,
+        valueInputOption: 'RAW',
+        resource: { values: [['number', 'channel', 'ts', 'text']] }
+      });
+      console.log('✅ Створено аркуш _bot_messages');
+    }
+  } catch (e) {
+    console.error('❌ ensureMsgSheet error:', e.message);
+  }
+}
+
+async function saveMessageToSheet(number, channel, ts, text) {
+  try {
+    const sheets = await getSheets();
+    await ensureMsgSheet(sheets);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: `${MSG_SHEET}!A:D`,
+      valueInputOption: 'RAW',
+      resource: { values: [[String(number), channel, ts, text]] }
+    });
+  } catch (e) {
+    console.error('❌ saveMessageToSheet error:', e.message);
+  }
+}
+
+async function loadMessageMap() {
+  try {
+    const sheets = await getSheets();
+    await ensureMsgSheet(sheets);
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: `${MSG_SHEET}!A2:D`,
+    });
+    const rows = res.data.values || [];
+    for (const [number, channel, ts, text] of rows) {
+      if (number && channel && ts) {
+        messageMap.set(number, { channel, ts, text: text || '' });
+      }
+    }
+    console.log(`✅ Завантажено ${rows.length} повідомлень з Google Sheets`);
+  } catch (e) {
+    console.error('❌ loadMessageMap error:', e.message);
+  }
 }
 
 async function appendToSheet(data) {
@@ -335,4 +402,7 @@ app.post('/slack/status-update', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`✅ Defect Tracker запущено на порту ${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`✅ Defect Tracker запущено на порту ${PORT}`);
+  await loadMessageMap();
+});
