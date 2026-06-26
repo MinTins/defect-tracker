@@ -138,10 +138,11 @@ app.post('/slack/interactions', (req, res) => {
     let messageText;
     appendToSheet(data).then(({ newNumber }) => {
       savedNumber = newNumber;
-      messageText = `🔴 *Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Тел:* ${data.phone} | *Замовл:* ${data.order_num}\n*Товар:* ${data.product}\n*Арт. LS:* ${data.lovespace_article || '—'} | *Арт. постач:* ${data.supplier_article || '—'}\n*Опис проблеми:* ${data.defect}`;
+      // baseText — без статусу, статус додається окремо зверху
+      messageText = `*Брак #${newNumber}* | ${data.date} | ${data.manager}\n*Замовл:* ${data.order_num} | *Тел:* ${data.phone}\n*Товар:* ${data.product}\n*Арт. LS:* ${data.lovespace_article || '—'} | *Арт. постач:* ${data.supplier_article || '—'}\n*Опис проблеми:* ${data.defect}`;
       return slackApi('chat.postMessage', {
         channel: channelId,
-        text: `🔴 Брак #${newNumber}`,
+        text: `🔴 Брак #${newNumber}`,  // fallback
         blocks: [
           {
             type: 'section',
@@ -270,7 +271,22 @@ async function appendToSheet(data) {
 }
 
 // ── 4. Webhook від Google Apps Script (зміна статусу) ────────
-// Зберігаємо map: номер звернення -> { channel, ts }
+// ── Емодзі для статусів ──────────────────────────────────────
+function statusEmoji(status) {
+  const map = {
+    'Нова заявка':                    '🔴',  // червоний
+    'Очікуємо посилку від клієнта':   '🟣',  // фіолетовий
+    'Отримали від клієнта':           '🔵',  // синій
+    'Діагностика':                    '🟡',  // жовтий
+    'Підтверджено':                   '🟢',  // зелений
+    'Не підтверджено':                '🟠',  // помаранчевий
+    'Відправили заміну':              '🟤',  // темно-зелений -> коричневий (найближче)
+    'Кошти на баланс':                '💚',  // темно-зелений
+  };
+  return map[status] || '⚪';
+}
+
+// Зберігаємо map: номер звернення -> { channel, ts, baseText }
 const messageMap = new Map();
 
 app.post('/slack/status-update', async (req, res) => {
@@ -284,17 +300,17 @@ app.post('/slack/status-update', async (req, res) => {
     return;
   }
 
-  // Оновлюємо повідомлення в Slack — додаємо статус
+  // Оновлюємо повідомлення в Slack — статус зверху з кольоровим емодзі
   const { channel, ts, text } = msg;
+  const emoji = statusEmoji(status);
   await slackApi('chat.update', {
     channel,
     ts,
-    text: `🔴 Брак #${number}`,
+    text: `${emoji} Брак #${number}`,
     blocks: [
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: `${text}
-*Статус:* ${status}` }
+        text: { type: 'mrkdwn', text: `${emoji} ${text}` }
       },
       {
         type: 'actions',
