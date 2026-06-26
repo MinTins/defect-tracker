@@ -38,10 +38,13 @@ async function slackApi(method, body) {
 // ── Отримати Full Name користувача зі Slack ──────────────────
 async function getSlackUserName(userId) {
   try {
+    console.log('🔍 Отримуємо профіль для userId:', userId);
     const result = await slackApi('users.info', { user: userId });
+    console.log('👤 users.info result:', JSON.stringify(result));
     if (result.ok) {
       return result.user.profile.real_name || result.user.real_name || result.user.name;
     }
+    console.error('❌ users.info error:', result.error);
   } catch (e) {
     console.error('❌ Помилка отримання імені:', e.message);
   }
