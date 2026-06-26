@@ -2,6 +2,12 @@ const { App } = require('@slack/bolt');
 const { google } = require('googleapis');
 require('dotenv').config();
 
+console.log('🔧 Запуск додатку...');
+console.log('BOT_TOKEN exists:', !!process.env.SLACK_BOT_TOKEN);
+console.log('SIGNING_SECRET exists:', !!process.env.SLACK_SIGNING_SECRET);
+console.log('SPREADSHEET_ID exists:', !!process.env.SPREADSHEET_ID);
+console.log('GOOGLE_CREDENTIALS exists:', !!process.env.GOOGLE_CREDENTIALS);
+
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET,
@@ -34,7 +40,9 @@ function sectionField(label, value) {
 
 // ── 1. Обробка команди /create ───────────────────────────────
 app.command('/create', async ({ ack, body, client, logger }) => {
+  console.log('📩 Отримано команду /create');
   await ack();
+  console.log('✅ ack() відправлено');
   try {
     await client.views.open({
       trigger_id: body.trigger_id,
@@ -56,7 +64,9 @@ app.command('/create', async ({ ack, body, client, logger }) => {
         ]
       }
     });
+    console.log('✅ Modal відкрито успішно');
   } catch (error) {
+    console.error('❌ Помилка відкриття modal:', error.message);
     logger.error(error);
   }
 });
@@ -80,7 +90,6 @@ app.view('defect_form', async ({ ack, body, view, client, logger }) => {
       timestamp:        new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' })
     };
 
-    // Відправка повідомлення в Slack
     await client.chat.postMessage({
       channel: channelId,
       text: '🔴 Новий брак зафіксовано',
@@ -107,21 +116,16 @@ app.view('defect_form', async ({ ack, body, view, client, logger }) => {
       ]
     });
 
-    // Запис у Google Sheets
     await appendToSheet(data);
-    logger.info('✅ Дані успішно записані в Google Sheets');
+    console.log('✅ Дані записані в Google Sheets');
 
   } catch (error) {
-    logger.error('❌ Помилка:', error);
+    console.error('❌ Помилка обробки форми:', error.message);
+    logger.error(error);
   }
 });
 
 // ── 3. Запис у Google Sheets ─────────────────────────────────
-// Структура аркуша БРАК:
-// A: № звернення  B: Менеджер(-ка)  C: Дата звернення  D: Телефон клієнта
-// E: № замовлення  F: Назва товару  G: (порожня)  H: Артикул постачальника
-// I: Опис дефекту  J: Статус  ...
-
 async function appendToSheet(data) {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 
@@ -132,14 +136,13 @@ async function appendToSheet(data) {
 
   const sheets = google.sheets({ version: 'v4', auth });
 
-  // Отримуємо кількість рядків щоб визначити № звернення
   const getRows = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SPREADSHEET_ID,
     range: 'БРАК!A:A',
   });
 
   const existingRows = getRows.data.values ? getRows.data.values.length : 1;
-  const newNumber = existingRows; // рядок 1 — заголовок, тому № = кількість рядків
+  const newNumber = existingRows;
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SPREADSHEET_ID,
@@ -147,15 +150,15 @@ async function appendToSheet(data) {
     valueInputOption: 'USER_ENTERED',
     resource: {
       values: [[
-        newNumber,        // A: № звернення
-        data.manager,     // B: Менеджер(-ка)
-        data.date,        // C: Дата звернення
-        data.phone,       // D: Телефон клієнта
-        data.order_num,   // E: № замовлення
-        data.product,     // F: Назва товару
-        '',               // G: порожня колонка
-        data.supplier_article, // H: Артикул постачальника
-        data.defect,      // I: Опис дефекту
+        newNumber,
+        data.manager,
+        data.date,
+        data.phone,
+        data.order_num,
+        data.product,
+        '',
+        data.supplier_article,
+        data.defect,
       ]]
     }
   });
