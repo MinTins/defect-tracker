@@ -185,7 +185,8 @@ app.post('/slack/interactions', (req, res) => {
     appendToSheet(data).then(({ newNumber }) => {
       savedNumber = newNumber;
       // baseText — без статусу і емодзі, вони додаються при оновленні
-      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}`;
+      const sheetUrl = `https://docs.google.com/spreadsheets/d/${process.env.SPREADSHEET_ID}/edit?gid=1385128494#gid=1385128494&range=A${savedRow}`;
+      messageText = `<${sheetUrl}|Брак #${newNumber}> | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}`;
       const problemText = `*Проблема:* _${data.defect}_`;
       const initialStatus = 'Нова заявка';
       const initialEmoji = statusEmoji(initialStatus);
