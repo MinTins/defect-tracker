@@ -35,7 +35,21 @@ function statusEmoji(status) {
 }
 
 function formatStatus(status) {
-  return `_\`[${status}]\`_`;
+  return status; // used only in fallback text
+}
+
+
+function buildStatusBlock(emoji, status) {
+  return {
+    type: 'rich_text',
+    elements: [{
+      type: 'rich_text_section',
+      elements: [
+        { type: 'text', text: emoji + ' ' },
+        { type: 'text', text: '[' + status + ']', style: { code: true, underline: true } }
+      ]
+    }]
+  };
 }
 
 function formatDate(dateStr) {
@@ -168,10 +182,8 @@ app.post('/slack/interactions', (req, res) => {
         channel: channelId,
         text: `${initialEmoji} [${initialStatus}] Брак #${newNumber}`,
         blocks: [
-          {
-            type: 'section',
-            text: { type: 'mrkdwn', text: fullText }
-          },
+          buildStatusBlock(initialEmoji, initialStatus),
+          { type: 'section', text: { type: 'mrkdwn', text: messageText } },
           {
             type: 'actions',
             elements: [{
@@ -405,8 +417,7 @@ app.post('/slack/row-update', async (req, res) => {
   const emoji = statusEmoji(status);
 
   // Перший рядок — статус і основна інфо
-  let text = `${emoji} ${formatStatus(status)}\n`;
-  text += `*Брак #${number}*`;
+  let text = `*Брак #${number}*`;
   if (d.date)    text += ` | ${d.date}`;
   if (d.manager) text += ` | *${d.manager}*`;
   if (d.order)   text += ` | Замовл: *${d.order}*`;
@@ -444,6 +455,7 @@ app.post('/slack/row-update', async (req, res) => {
     ts: msg.ts,
     text: `${emoji} [${status}] Брак #${number}`,
     blocks: [
+      buildStatusBlock(emoji, status),
       { type: 'section', text: { type: 'mrkdwn', text } },
       {
         type: 'actions',
