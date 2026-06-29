@@ -23,15 +23,19 @@ app.get('/', (req, res) => res.send('✅ Defect Tracker працює!'));
 function statusEmoji(status) {
   const map = {
     'Нова заявка':                    '⚪',
-    'Очікуємо посилку від клієнта':   '🪻',
-    'Отримали від клієнта':           '🩵',
+    'Очікуємо посилку від клієнта':   '🟣',
+    'Отримали від клієнта':           '🔵',
     'Діагностика':                    '🟡',
     'Підтверджено':                   '🟢',
     'Не підтверджено':                '🟠',
-    'Відправили заміну':              '💚',
+    'Відправили заміну':              '🟤',
     'Кошти на баланс':                '🔵',
   };
   return map[status] || '⚪';
+}
+
+function formatStatus(status) {
+  return `\`${status}\``;
 }
 
 function formatDate(dateStr) {
@@ -159,7 +163,7 @@ app.post('/slack/interactions', (req, res) => {
       const initialStatus = 'Нова заявка';
       const initialEmoji = statusEmoji(initialStatus);
       // Повний текст: статус зверху, потім опис
-      const fullText = `${initialEmoji} *[${initialStatus}]*\n${messageText}`;
+      const fullText = `${initialEmoji} ${formatStatus(initialStatus)}\n${messageText}`;
       return slackApi('chat.postMessage', {
         channel: channelId,
         text: `${initialEmoji} [${initialStatus}] Брак #${newNumber}`,
@@ -401,7 +405,7 @@ app.post('/slack/row-update', async (req, res) => {
   const emoji = statusEmoji(status);
 
   // Перший рядок — статус і основна інфо
-  let text = `${emoji} *[${status}]*\n`;
+  let text = `${emoji} ${formatStatus(status)}\n`;
   text += `*Брак #${number}*`;
   if (d.date)    text += ` | ${d.date}`;
   if (d.manager) text += ` | *${d.manager}*`;
@@ -460,6 +464,31 @@ app.post('/slack/row-update', async (req, res) => {
   }).then(r => {
     if (!r.ok) console.error('❌ chat.update error:', r.error);
     else console.log(`✅ Повідомлення оновлено для #${number}`);
+  });
+});
+
+
+// ── 5. Webhook для видалення повідомлення при видаленні рядка ─
+app.post('/slack/row-delete', async (req, res) => {
+  res.status(200).send('ok');
+  const { number } = req.body;
+  console.log(`🗑 Видалення повідомлення для #${number}`);
+
+  const msg = messageMap.get(String(number));
+  if (!msg) {
+    console.log(`ℹ️ Повідомлення для #${number} не знайдено`);
+    return;
+  }
+
+  await slackApi('chat.delete', {
+    channel: msg.channel,
+    ts: msg.ts
+  }).then(r => {
+    if (!r.ok) console.error('❌ chat.delete error:', r.error);
+    else {
+      console.log(`✅ Повідомлення #${number} видалено з Slack`);
+      messageMap.delete(String(number));
+    }
   });
 });
 

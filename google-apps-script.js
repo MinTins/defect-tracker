@@ -30,11 +30,70 @@ const COLS = {
 
 function createTrigger() {
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
+
+  // Тригер для змін значень (onEdit)
   ScriptApp.newTrigger('onSheetEdit')
     .forSpreadsheet(SpreadsheetApp.getActive())
     .onEdit()
     .create();
-  console.log('✅ Тригер встановлено');
+
+  // Тригер для структурних змін (видалення рядків)
+  ScriptApp.newTrigger('onSheetChange')
+    .forSpreadsheet(SpreadsheetApp.getActive())
+    .onChange()
+    .create();
+
+  console.log('✅ Тригери встановлено');
+}
+
+// Зберігаємо стан рядків перед змінами
+function getRowNumbers() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_NAME);
+  if (!sheet) return [];
+  const values = sheet.getRange('A2:A').getValues();
+  return values
+    .map(r => String(r[0]).trim())
+    .filter(v => v !== '' && v !== '0');
+}
+
+// Викликається при структурних змінах (видалення/додавання рядків)
+function onSheetChange(e) {
+  try {
+    if (e.changeType !== 'REMOVE_ROW') return;
+
+    // Отримуємо поточні номери в таблиці
+    const currentNumbers = new Set(getRowNumbers());
+
+    // Отримуємо збережені номери з PropertiesService
+    const props = PropertiesService.getScriptProperties();
+    const savedRaw = props.getProperty('row_numbers');
+    if (!savedRaw) return;
+
+    const savedNumbers = JSON.parse(savedRaw);
+
+    // Знаходимо видалені номери
+    const deleted = savedNumbers.filter(n => !currentNumbers.has(n));
+
+    if (deleted.length === 0) return;
+
+    console.log('Видалені рядки:', deleted);
+
+    // Відправляємо webhook для кожного видаленого рядка
+    deleted.forEach(number => {
+      UrlFetchApp.fetch(WEBHOOK_URL.replace('row-update', 'row-delete'), {
+        method: 'POST',
+        contentType: 'application/json',
+        payload: JSON.stringify({ number }),
+        muteHttpExceptions: true
+      });
+    });
+
+    // Оновлюємо збережений стан
+    props.setProperty('row_numbers', JSON.stringify([...currentNumbers]));
+
+  } catch (err) {
+    console.error('onSheetChange помилка:', err.message);
+  }
 }
 
 function onSheetEdit(e) {
@@ -79,6 +138,10 @@ function onSheetEdit(e) {
       payload: JSON.stringify(payload),
       muteHttpExceptions: true
     });
+
+    // Зберігаємо поточні номери рядків для відстеження видалень
+    const props = PropertiesService.getScriptProperties();
+    props.setProperty('row_numbers', JSON.stringify(getRowNumbers()));
 
   } catch (err) {
     console.error('Помилка:', err.message);
