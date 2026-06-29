@@ -222,10 +222,13 @@ app.post('/slack/interactions', (req, res) => {
       else {
         console.log('✅ Повідомлення відправлено, ts:', result.ts);
         // Зберігаємо ts для подальшого оновлення статусу
+        const sheetUrlSaved = `https://docs.google.com/spreadsheets/d/${process.env.SPREADSHEET_ID}/edit?gid=1385128494#gid=1385128494&range=A${savedRow}`;
         messageMap.set(String(savedNumber), {
           channel: channelId,
           ts: result.ts,
-          text: messageText
+          text: messageText,
+          sheetUrl: sheetUrlSaved,
+          number: savedNumber
         });
         // Зберігаємо в Google Sheets для відновлення після перезапуску
         saveMessageToSheet(savedNumber, channelId, result.ts, messageText);
@@ -459,8 +462,10 @@ app.post('/slack/row-update', async (req, res) => {
   const status = d.status || 'Нова заявка';
   const emoji = statusEmoji(status);
 
-  // Перший рядок — статус і основна інфо
-  let text = `*Брак #${number}*`;
+  // Перший рядок — статус і основна інфо (зберігаємо посилання)
+  const msgUrl = msg.sheetUrl || '';
+  const bracLabel = msgUrl ? `<${msgUrl}|*Брак #${number}*>` : `*Брак #${number}*`;
+  let text = bracLabel;
   if (d.date)    text += ` | ${d.date}`;
   if (d.manager) text += ` | *${d.manager}*`;
   if (d.order)   text += ` | Замовл: *${d.order}*`;
