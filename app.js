@@ -46,9 +46,21 @@ function buildStatusBlock(emoji, status) {
       type: 'rich_text_section',
       elements: [
         { type: 'text', text: emoji + ' ' },
-        { type: 'text', text: '[' + status + ']', style: { code: true, underline: true } }
+        { type: 'text', text: '[' + status + ']', style: { code: true } }
       ]
     }]
+  };
+}
+
+function buildProductBlock(product, artLs) {
+  const elements = [
+    { type: 'text', text: 'Товар: ' },
+    { type: 'text', text: product, style: { underline: true } },
+  ];
+  if (artLs) elements.push({ type: 'text', text: ' (' + artLs + ')' });
+  return {
+    type: 'rich_text',
+    elements: [{ type: 'rich_text_section', elements }]
   };
 }
 
@@ -173,7 +185,8 @@ app.post('/slack/interactions', (req, res) => {
     appendToSheet(data).then(({ newNumber }) => {
       savedNumber = newNumber;
       // baseText — без статусу і емодзі, вони додаються при оновленні
-      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}\n*Товар:* _${data.product}_ (${data.lovespace_article || '—'})\n*Проблема:* _${data.defect}_`;
+      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}`;
+      const problemText = `*Проблема:* _${data.defect}_`;
       const initialStatus = 'Нова заявка';
       const initialEmoji = statusEmoji(initialStatus);
       // Повний текст: статус зверху, потім опис
@@ -184,6 +197,8 @@ app.post('/slack/interactions', (req, res) => {
         blocks: [
           buildStatusBlock(initialEmoji, initialStatus),
           { type: 'section', text: { type: 'mrkdwn', text: messageText } },
+          buildProductBlock(data.product, data.lovespace_article || '—'),
+          { type: 'section', text: { type: 'mrkdwn', text: problemText } },
           {
             type: 'actions',
             elements: [{
@@ -423,15 +438,8 @@ app.post('/slack/row-update', async (req, res) => {
   if (d.order)   text += ` | Замовл: *${d.order}*`;
   if (d.phone)   text += ` | Тел: ${d.phone}`;
 
-  // Товар з артикулами
-  if (d.product) {
-    text += `\n*Товар:* _${d.product}_`;
-    const arts = [d.art_ls, d.art_supplier].filter(Boolean);
-    if (arts.length) text += ` (${arts.join(' | ')})`;
-  }
-
-  // Проблема
-  if (d.defect) text += `\n*Проблема:* _${d.defect}_`;
+  let defectText = '';
+  if (d.defect) defectText = `*Проблема:* _${d.defect}_`;
 
   // Додаткові поля — тільки заповнені
   const extra = [
@@ -446,33 +454,34 @@ app.post('/slack/row-update', async (req, res) => {
     ['comment',      d.comment],
   ].filter(([, v]) => v && String(v).trim() !== '');
 
-  if (extra.length) {
-    text += '\n' + extra.map(([k, v]) => `*${FIELD_LABELS[k]}:* ${v}`).join(' | ');
-  }
+  const updateBlocks = [
+    buildStatusBlock(emoji, status),
+    { type: 'section', text: { type: 'mrkdwn', text } },
+  ];
+  if (d.product) updateBlocks.push(buildProductBlock(d.product, d.art_ls || ''));
+  if (defectText) updateBlocks.push({ type: 'section', text: { type: 'mrkdwn', text: defectText } });
+  if (extra.length) updateBlocks.push({ type: 'section', text: { type: 'mrkdwn', text: extra.map(([k, v]) => `*${FIELD_LABELS[k]}:* ${v}`).join(' | ') } });
+  updateBlocks.push({
+    type: 'actions',
+    elements: [{
+      type: 'button',
+      text: { type: 'plain_text', text: '🗑 Видалити' },
+      style: 'danger',
+      action_id: 'delete_message',
+      confirm: {
+        title: { type: 'plain_text', text: 'Видалити повідомлення?' },
+        text: { type: 'plain_text', text: 'Запис в таблиці залишиться.' },
+        confirm: { type: 'plain_text', text: 'Видалити' },
+        deny: { type: 'plain_text', text: 'Скасувати' }
+      }
+    }]
+  });
 
   await slackApi('chat.update', {
     channel: msg.channel,
     ts: msg.ts,
     text: `${emoji} [${status}] Брак #${number}`,
-    blocks: [
-      buildStatusBlock(emoji, status),
-      { type: 'section', text: { type: 'mrkdwn', text } },
-      {
-        type: 'actions',
-        elements: [{
-          type: 'button',
-          text: { type: 'plain_text', text: '🗑 Видалити' },
-          style: 'danger',
-          action_id: 'delete_message',
-          confirm: {
-            title: { type: 'plain_text', text: 'Видалити повідомлення?' },
-            text: { type: 'plain_text', text: 'Запис в таблиці залишиться.' },
-            confirm: { type: 'plain_text', text: 'Видалити' },
-            deny: { type: 'plain_text', text: 'Скасувати' }
-          }
-        }]
-      }
-    ]
+    blocks: updateBlocks
   }).then(r => {
     if (!r.ok) console.error('❌ chat.update error:', r.error);
     else console.log(`✅ Повідомлення оновлено для #${number}`);
