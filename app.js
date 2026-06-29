@@ -22,14 +22,14 @@ app.get('/', (req, res) => res.send('✅ Defect Tracker працює!'));
 
 function statusEmoji(status) {
   const map = {
-    'Нова заявка':                    '⚪',
-    'Очікуємо посилку від клієнта':   '🟣',
-    'Отримали від клієнта':           '🔵',
-    'Діагностика':                    '🟡',
-    'Підтверджено':                   '🟢',
-    'Не підтверджено':                '🟠',
-    'Відправили заміну':              '🟤',
-    'Кошти на баланс':                '🔵',
+    'Нова заявка':                          '⚪',  // білий
+    'Очікуємо посилку від клієнта':         '🟣',  // фіолетовий
+    'Отримали від клієнта':                 '🔵',  // блакитний
+    'Діагностика':                          '🟡',  // жовтий
+    'Підтверджено. Заміна постачальник':    '🟢',  // зелений
+    'Підтверджено. Заміна новим замовленням': '🟢', // зелений
+    'Підтверджено. Кошти на баланс':        '🟤',  // темно-синій/коричневий
+    'Не підтверджено':                      '🟠',  // помаранчевий
   };
   return map[status] || '⚪';
 }
@@ -482,9 +482,23 @@ app.post('/slack/row-update', async (req, res) => {
     ts: msg.ts,
     text: `${emoji} [${status}] Брак #${number}`,
     blocks: updateBlocks
-  }).then(r => {
-    if (!r.ok) console.error('❌ chat.update error:', r.error);
-    else console.log(`✅ Повідомлення оновлено для #${number}`);
+  }).then(async r => {
+    if (!r.ok) {
+      console.error('❌ chat.update error:', r.error);
+      return;
+    }
+    console.log(`✅ Повідомлення оновлено для #${number}`);
+
+    // Закріплення/відкріплення
+    if (PIN_STATUSES.has(status)) {
+      const pinResult = await slackApi('pins.add', { channel: msg.channel, timestamp: msg.ts });
+      if (pinResult.ok) console.log(`📌 Повідомлення #${number} закріплено`);
+      else if (pinResult.error !== 'already_pinned') console.error('❌ pin error:', pinResult.error);
+    } else {
+      const unpinResult = await slackApi('pins.remove', { channel: msg.channel, timestamp: msg.ts });
+      if (unpinResult.ok) console.log(`📌 Повідомлення #${number} відкріплено`);
+      else if (unpinResult.error !== 'no_pin') console.error('❌ unpin error:', unpinResult.error);
+    }
   });
 });
 
