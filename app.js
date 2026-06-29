@@ -20,6 +20,17 @@ app.use((req, res, next) => {
 
 app.get('/', (req, res) => res.send('✅ Defect Tracker працює!'));
 
+// Зберігаємо map: номер -> { channel, ts, sheetUrl }
+const messageMap = new Map();
+
+// Статуси при яких повідомлення закріплюється
+const PIN_STATUSES = new Set([
+  'Підтверджено. Заміна постачальник',
+  'Підтверджено. Заміна новим замовленням',
+  'Підтверджено. Кошти на баланс',
+]);
+
+
 function statusEmoji(status) {
   const map = {
     'Нова заявка':                          '⚪',  // білий
@@ -231,7 +242,7 @@ app.post('/slack/interactions', (req, res) => {
           number: savedNumber
         });
         // Зберігаємо в Google Sheets для відновлення після перезапуску
-        saveMessageToSheet(savedNumber, channelId, result.ts, messageText);
+        saveMessageToSheet(savedNumber, channelId, result.ts, messageText, sheetUrlSaved);
       }
     }).catch(err => console.error('❌ Помилка:', err.message));
 
@@ -298,7 +309,7 @@ async function ensureMsgSheet(sheets) {
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: `${MSG_SHEET}!A1:D1`,
         valueInputOption: 'RAW',
-        resource: { values: [['number', 'channel', 'ts', 'text']] }
+        resource: { values: [['number', 'channel', 'ts', 'text', 'sheetUrl']] }
       });
       console.log('✅ Створено аркуш _bot_messages');
     }
@@ -307,15 +318,15 @@ async function ensureMsgSheet(sheets) {
   }
 }
 
-async function saveMessageToSheet(number, channel, ts, text) {
+async function saveMessageToSheet(number, channel, ts, text, sheetUrl = '') {
   try {
     const sheets = await getSheets();
     await ensureMsgSheet(sheets);
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${MSG_SHEET}!A:D`,
+      range: `${MSG_SHEET}!A:E`,
       valueInputOption: 'RAW',
-      resource: { values: [[String(number), channel, ts, text]] }
+      resource: { values: [[String(number), channel, ts, text, sheetUrl]] }
     });
   } catch (e) {
     console.error('❌ saveMessageToSheet error:', e.message);
@@ -328,12 +339,12 @@ async function loadMessageMap() {
     await ensureMsgSheet(sheets);
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${MSG_SHEET}!A2:D`,
+      range: `${MSG_SHEET}!A2:E`,
     });
     const rows = res.data.values || [];
-    for (const [number, channel, ts, text] of rows) {
+    for (const [number, channel, ts, text, sheetUrl] of rows) {
       if (number && channel && ts) {
-        messageMap.set(number, { channel, ts, text: text || '' });
+        messageMap.set(number, { channel, ts, text: text || '', sheetUrl: sheetUrl || '' });
       }
     }
     console.log(`✅ Завантажено ${rows.length} повідомлень з Google Sheets`);
@@ -420,9 +431,6 @@ async function appendToSheet(data) {
 }
 
 // ── 4. Webhook від Google Apps Script (оновлення рядка) ─────
-// Зберігаємо map: номер -> { channel, ts }
-const messageMap = new Map();
-
 // Скорочені назви полів для Slack
 const FIELD_LABELS = {
   manager:      'Менеджер',
