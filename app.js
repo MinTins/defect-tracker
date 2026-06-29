@@ -339,50 +339,90 @@ async function appendToSheet(data) {
   return { newNumber, newRow };
 }
 
-// ── 4. Webhook від Google Apps Script (зміна статусу) ────────
-// ── Емодзі для статусів ──────────────────────────────────────
-function statusEmoji(status) {
-  const map = {
-    'Нова заявка':                    '⚪',  // білий/нейтральний
-    'Очікуємо посилку від клієнта':   '🪻',  // світло-фіолетовий
-    'Отримали від клієнта':           '🩵',  // світло-блакитний
-    'Діагностика':                    '🟡',  // світло-жовтий
-    'Підтверджено':                   '🟢',  // світло-зелений
-    'Не підтверджено':                '🟠',  // світло-помаранчевий
-    'Відправили заміну':              '💚',  // темно-зелений
-    'Кошти на баланс':                '🔵',  // темно-синій
-  };
-  return map[status] || '⚪';
-}
-
-// Зберігаємо map: номер звернення -> { channel, ts, baseText }
+// ── 4. Webhook від Google Apps Script (оновлення рядка) ─────
+// Зберігаємо map: номер -> { channel, ts }
 const messageMap = new Map();
 
-app.post('/slack/status-update', async (req, res) => {
+// Скорочені назви полів для Slack
+const FIELD_LABELS = {
+  manager:      'Менеджер',
+  date:         'Дата',
+  phone:        'Тел',
+  order:        'Замовл',
+  product:      'Товар',
+  art_ls:       'Арт LS',
+  supplier:     'Постач',
+  art_supplier: 'Арт постач',
+  defect:       'Проблема',
+  status:       'Статус',
+  date_sent_by: 'Відпр клієнтом',
+  ttn_client:   'ТТН клієнта',
+  date_received:'Отримали',
+  date_sent_to: 'Відпр постач',
+  ttn_supplier: 'ТТН постач',
+  date_returned:'Відпр клієнту',
+  ttn_return:   'ТТН клієнту',
+  comment:      'Коментар',
+};
+
+// Зберігаємо map: номер -> { channel, ts }
+
+app.post('/slack/row-update', async (req, res) => {
   res.status(200).send('ok');
-  const { number, status } = req.body;
-  console.log(`📊 Оновлення статусу: #${number} -> ${status}`);
+  const d = req.body;
+  const number = d.number;
+  console.log(`📊 Оновлення рядка #${number}`);
 
   const msg = messageMap.get(String(number));
   if (!msg) {
-    console.log(`ℹ️ Повідомлення для #${number} не знайдено в пам'яті`);
+    console.log(`ℹ️ Повідомлення для #${number} не знайдено`);
     return;
   }
 
-  // Оновлюємо повідомлення в Slack — статус зверху з кольоровим емодзі
-  const { channel, ts, text } = msg;
+  const status = d.status || 'Нова заявка';
   const emoji = statusEmoji(status);
-  // Статус і емодзі першим рядком, потім деталі заявки
-  const updatedText = `${emoji} *[${status}]*\n${text}`;
+
+  // Перший рядок — статус і основна інфо
+  let text = `${emoji} *[${status}]*\n`;
+  text += `*Брак #${number}*`;
+  if (d.date)    text += ` | ${d.date}`;
+  if (d.manager) text += ` | *${d.manager}*`;
+  if (d.order)   text += ` | Замовл: *${d.order}*`;
+  if (d.phone)   text += ` | Тел: ${d.phone}`;
+
+  // Товар з артикулами
+  if (d.product) {
+    text += `\n*Товар:* ${d.product}`;
+    const arts = [d.art_ls, d.art_supplier].filter(Boolean);
+    if (arts.length) text += ` (${arts.join(' | ')})`;
+  }
+
+  // Проблема
+  if (d.defect) text += `\n*Проблема:* _${d.defect}_`;
+
+  // Додаткові поля — тільки заповнені
+  const extra = [
+    ['supplier',     d.supplier],
+    ['date_sent_by', d.date_sent_by],
+    ['ttn_client',   d.ttn_client],
+    ['date_received',d.date_received],
+    ['date_sent_to', d.date_sent_to],
+    ['ttn_supplier', d.ttn_supplier],
+    ['date_returned',d.date_returned],
+    ['ttn_return',   d.ttn_return],
+    ['comment',      d.comment],
+  ].filter(([, v]) => v && String(v).trim() !== '');
+
+  if (extra.length) {
+    text += '\n' + extra.map(([k, v]) => `*${FIELD_LABELS[k]}:* ${v}`).join(' | ');
+  }
+
   await slackApi('chat.update', {
-    channel,
-    ts,
+    channel: msg.channel,
+    ts: msg.ts,
     text: `${emoji} [${status}] Брак #${number}`,
     blocks: [
-      {
-        type: 'section',
-        text: { type: 'mrkdwn', text: updatedText }
-      },
+      { type: 'section', text: { type: 'mrkdwn', text } },
       {
         type: 'actions',
         elements: [{
@@ -401,9 +441,10 @@ app.post('/slack/status-update', async (req, res) => {
     ]
   }).then(r => {
     if (!r.ok) console.error('❌ chat.update error:', r.error);
-    else console.log(`✅ Статус оновлено в Slack для #${number}`);
+    else console.log(`✅ Повідомлення оновлено для #${number}`);
   });
 });
+
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, async () => {
