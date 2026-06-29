@@ -287,9 +287,10 @@ async function appendToSheet(data) {
   // Структура колонок:
   // A: № звернення  B: Менеджер  C: Дата  D: Телефон  E: № замовлення
   // F: Назва товару  G: Артикул LOVESPACE  H: (не чіпаємо — dropdown)
-  // I: Артикул постач  J: Опис проблеми  K: Статус
+  // H: Постачальник (не чіпаємо)  I: Артикул постачальника (не чіпаємо)
+  // J: Опис дефекту  K: Статус
 
-  // Записуємо A-G окремо від I-K, щоб не чіпати H з dropdown
+  // Записуємо A-G, потім J-K (H і I не чіпаємо)
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
     range: `БРАК!A${newRow}:G${newRow}`,
@@ -309,7 +310,7 @@ async function appendToSheet(data) {
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `БРАК!I${newRow}:J${newRow}`,
+    range: `БРАК!J${newRow}:K${newRow}`,
     valueInputOption: 'RAW',
     resource: {
       values: [[
