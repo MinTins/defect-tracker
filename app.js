@@ -82,7 +82,6 @@ app.post('/slack/commands', (req, res) => {
           { type: 'input', block_id: 'phone', label: { type: 'plain_text', text: 'Телефон клієнта' }, element: { type: 'plain_text_input', action_id: 'phone' } },
           { type: 'input', block_id: 'product', label: { type: 'plain_text', text: 'Назва товару (повна номенклатура)' }, element: { type: 'plain_text_input', action_id: 'product', multiline: false } },
           { type: 'input', block_id: 'lovespace_article', label: { type: 'plain_text', text: 'Артикул LOVESPACE' }, element: { type: 'plain_text_input', action_id: 'lovespace_article' }, optional: true },
-          { type: 'input', block_id: 'supplier_article', label: { type: 'plain_text', text: 'Артикул постачальника' }, element: { type: 'plain_text_input', action_id: 'supplier_article' }, optional: true },
           { type: 'input', block_id: 'defect', label: { type: 'plain_text', text: 'Опис проблеми' }, element: { type: 'plain_text_input', action_id: 'defect', multiline: true } },
         ]
       }
@@ -129,7 +128,6 @@ app.post('/slack/interactions', (req, res) => {
       order_num:         v.order_num.order_num.value,
       product:           v.product.product.value,
       lovespace_article: v.lovespace_article.lovespace_article.value || '',
-      supplier_article:  v.supplier_article.supplier_article.value,
       defect:            v.defect.defect.value,
       timestamp:         new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' })
     };
@@ -139,7 +137,7 @@ app.post('/slack/interactions', (req, res) => {
     appendToSheet(data).then(({ newNumber }) => {
       savedNumber = newNumber;
       // baseText — без статусу і емодзі, вони додаються при оновленні
-      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}\n*Товар:* ${data.product} (${data.lovespace_article || '—'} | ${data.supplier_article || '—'})\n*Проблема:* _${data.defect}_`;
+      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}\n*Товар:* ${data.product} (${data.lovespace_article || '—'})\n*Проблема:* _${data.defect}_`;
       const initialStatus = 'Нова заявка';
       const initialEmoji = statusEmoji(initialStatus);
       // Повний текст: статус зверху, потім опис
@@ -311,11 +309,10 @@ async function appendToSheet(data) {
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `БРАК!I${newRow}:K${newRow}`,
+    range: `БРАК!I${newRow}:J${newRow}`,
     valueInputOption: 'RAW',
     resource: {
       values: [[
-        data.supplier_article || '',
         data.defect,
         'Нова заявка',
       ]]
