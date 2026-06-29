@@ -20,6 +20,29 @@ app.use((req, res, next) => {
 
 app.get('/', (req, res) => res.send('✅ Defect Tracker працює!'));
 
+function statusEmoji(status) {
+  const map = {
+    'Нова заявка':                    '⚪',
+    'Очікуємо посилку від клієнта':   '🪻',
+    'Отримали від клієнта':           '🩵',
+    'Діагностика':                    '🟡',
+    'Підтверджено':                   '🟢',
+    'Не підтверджено':                '🟠',
+    'Відправили заміну':              '💚',
+    'Кошти на баланс':                '🔵',
+  };
+  return map[status] || '⚪';
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-');
+  if (!year || !month || !day) return dateStr;
+  return `${day}.${month}.${year}`;
+}
+
+
+
 async function slackApi(method, body) {
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: 'POST',
@@ -53,11 +76,6 @@ async function getSlackUserName(userId) {
   return null;
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const [year, month, day] = dateStr.split('-');
-  return `${day}.${month}.${year}`;
-}
 
 // ── 1. Команда /create ───────────────────────────────────────
 app.post('/slack/commands', (req, res) => {
