@@ -112,6 +112,7 @@ function onSheetEdit(e) {
 
     const payload = {
       number: String(number),
+      statusChanged: col === COLS.STATUS, // чи змінився саме статус
       manager:      rowData[COLS.MANAGER - 1] || '',
       date:         formatDate(rowData[COLS.DATE - 1]),
       phone:        String(rowData[COLS.PHONE - 1] || ''),
