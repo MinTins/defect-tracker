@@ -246,6 +246,33 @@ async function getSheets() {
   return google.sheets({ version: 'v4', auth });
 }
 
+
+// ── Видалення рядка з Google Sheets ─────────────────────────
+async function deleteSheetRow(newRow) {
+  try {
+    const sheets = await getSheets();
+    const sheetId = 1385128494;
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      resource: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: newRow - 1,
+              endIndex: newRow
+            }
+          }
+        }]
+      }
+    });
+    console.log(`✅ Рядок ${newRow} видалено з таблиці`);
+  } catch (e) {
+    console.error('❌ deleteSheetRow error:', e.message);
+  }
+}
+
 // ── Збереження/завантаження messageMap з Google Sheets ───────
 const MSG_SHEET = '_bot_messages';
 
