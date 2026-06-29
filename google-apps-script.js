@@ -5,48 +5,41 @@
 const WEBHOOK_URL = 'https://zucchini-unity-production-0cd9.up.railway.app/slack/row-update';
 const SHEET_NAME = 'БРАК';
 
-// Індекси колонок (з 1)
 const COLS = {
-  NUMBER:           1,  // A: № звернення
-  MANAGER:          2,  // B: Менеджер(-ка)
-  DATE:             3,  // C: Дата звернення
-  PHONE:            4,  // D: Телефон клієнта
-  ORDER:            5,  // E: № замовлення
-  PRODUCT:          6,  // F: Назва товару
-  ART_LS:           7,  // G: Артикул LOVESPACE
-  SUPPLIER:         8,  // H: Постачальник
-  ART_SUPPLIER:     9,  // I: Артикул постачальника
-  DEFECT:          10,  // J: Опис дефекту
-  STATUS:          11,  // K: Статус
-  DATE_SENT_BY:    12,  // L: Дата відправки клієнтом
-  TTN_CLIENT:      13,  // M: ТТН клієнта
-  DATE_RECEIVED:   14,  // N: Дата отримання нами
-  DATE_SENT_TO:    15,  // O: Дата відправки постачальнику
-  TTN_SUPPLIER:    16,  // P: ТТН відправки постачальнику
-  DATE_RETURNED:   17,  // Q: Дата відправки клієнту/повернення коштів
-  TTN_RETURN:      18,  // R: ТТН відправки клієнту
-  COMMENT:         19,  // S: Коментар
+  NUMBER:        1,
+  MANAGER:       2,
+  DATE:          3,
+  PHONE:         4,
+  ORDER:         5,
+  PRODUCT:       6,
+  ART_LS:        7,
+  SUPPLIER:      8,
+  ART_SUPPLIER:  9,
+  DEFECT:       10,
+  STATUS:       11,
+  DATE_SENT_BY: 12,
+  TTN_CLIENT:   13,
+  DATE_RECEIVED:14,
+  DATE_SENT_TO: 15,
+  TTN_SUPPLIER: 16,
+  DATE_RETURNED:17,
+  TTN_RETURN:   18,
+  COMMENT:      19,
 };
 
 function createTrigger() {
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
-
-  // Тригер для змін значень (onEdit)
   ScriptApp.newTrigger('onSheetEdit')
     .forSpreadsheet(SpreadsheetApp.getActive())
     .onEdit()
     .create();
-
-  // Тригер для структурних змін (видалення рядків)
   ScriptApp.newTrigger('onSheetChange')
     .forSpreadsheet(SpreadsheetApp.getActive())
     .onChange()
     .create();
-
   console.log('✅ Тригери встановлено');
 }
 
-// Зберігаємо стан рядків перед змінами
 function getRowNumbers() {
   const sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_NAME);
   if (!sheet) return [];
@@ -56,29 +49,16 @@ function getRowNumbers() {
     .filter(v => v !== '' && v !== '0');
 }
 
-// Викликається при структурних змінах (видалення/додавання рядків)
 function onSheetChange(e) {
   try {
     if (e.changeType !== 'REMOVE_ROW') return;
-
-    // Отримуємо поточні номери в таблиці
     const currentNumbers = new Set(getRowNumbers());
-
-    // Отримуємо збережені номери з PropertiesService
     const props = PropertiesService.getScriptProperties();
     const savedRaw = props.getProperty('row_numbers');
     if (!savedRaw) return;
-
     const savedNumbers = JSON.parse(savedRaw);
-
-    // Знаходимо видалені номери
     const deleted = savedNumbers.filter(n => !currentNumbers.has(n));
-
     if (deleted.length === 0) return;
-
-    console.log('Видалені рядки:', deleted);
-
-    // Відправляємо webhook для кожного видаленого рядка
     deleted.forEach(number => {
       UrlFetchApp.fetch(WEBHOOK_URL.replace('row-update', 'row-delete'), {
         method: 'POST',
@@ -87,10 +67,7 @@ function onSheetChange(e) {
         muteHttpExceptions: true
       });
     });
-
-    // Оновлюємо збережений стан
     props.setProperty('row_numbers', JSON.stringify([...currentNumbers]));
-
   } catch (err) {
     console.error('onSheetChange помилка:', err.message);
   }
@@ -102,35 +79,35 @@ function onSheetEdit(e) {
     if (sheet.getName() !== SHEET_NAME) return;
 
     const row = e.range.getRow();
-    if (row < 2) return; // пропускаємо заголовок
+    const col = e.range.getColumn(); // ← визначаємо col тут
+    if (row < 2) return;
 
     const number = sheet.getRange(row, COLS.NUMBER).getValue();
     if (!number) return;
 
-    // Читаємо весь рядок
     const rowData = sheet.getRange(row, 1, 1, 19).getValues()[0];
 
     const payload = {
-      number: String(number),
-      statusChanged: col === COLS.STATUS, // чи змінився саме статус
-      manager:      rowData[COLS.MANAGER - 1] || '',
-      date:         formatDate(rowData[COLS.DATE - 1]),
-      phone:        String(rowData[COLS.PHONE - 1] || ''),
-      order:        String(rowData[COLS.ORDER - 1] || ''),
-      product:      rowData[COLS.PRODUCT - 1] || '',
-      art_ls:       rowData[COLS.ART_LS - 1] || '',
-      supplier:     rowData[COLS.SUPPLIER - 1] || '',
-      art_supplier: rowData[COLS.ART_SUPPLIER - 1] || '',
-      defect:       rowData[COLS.DEFECT - 1] || '',
-      status:       rowData[COLS.STATUS - 1] || '',
-      date_sent_by: formatDate(rowData[COLS.DATE_SENT_BY - 1]),
-      ttn_client:   String(rowData[COLS.TTN_CLIENT - 1] || ''),
-      date_received:formatDate(rowData[COLS.DATE_RECEIVED - 1]),
-      date_sent_to: formatDate(rowData[COLS.DATE_SENT_TO - 1]),
-      ttn_supplier: String(rowData[COLS.TTN_SUPPLIER - 1] || ''),
-      date_returned:formatDate(rowData[COLS.DATE_RETURNED - 1]),
-      ttn_return:   String(rowData[COLS.TTN_RETURN - 1] || ''),
-      comment:      rowData[COLS.COMMENT - 1] || '',
+      number:        String(number),
+      statusChanged: col === COLS.STATUS, // тепер col визначено
+      manager:       rowData[COLS.MANAGER - 1] || '',
+      date:          formatDate(rowData[COLS.DATE - 1]),
+      phone:         String(rowData[COLS.PHONE - 1] || ''),
+      order:         String(rowData[COLS.ORDER - 1] || ''),
+      product:       rowData[COLS.PRODUCT - 1] || '',
+      art_ls:        rowData[COLS.ART_LS - 1] || '',
+      supplier:      rowData[COLS.SUPPLIER - 1] || '',
+      art_supplier:  rowData[COLS.ART_SUPPLIER - 1] || '',
+      defect:        rowData[COLS.DEFECT - 1] || '',
+      status:        rowData[COLS.STATUS - 1] || '',
+      date_sent_by:  formatDate(rowData[COLS.DATE_SENT_BY - 1]),
+      ttn_client:    String(rowData[COLS.TTN_CLIENT - 1] || ''),
+      date_received: formatDate(rowData[COLS.DATE_RECEIVED - 1]),
+      date_sent_to:  formatDate(rowData[COLS.DATE_SENT_TO - 1]),
+      ttn_supplier:  String(rowData[COLS.TTN_SUPPLIER - 1] || ''),
+      date_returned: formatDate(rowData[COLS.DATE_RETURNED - 1]),
+      ttn_return:    String(rowData[COLS.TTN_RETURN - 1] || ''),
+      comment:       rowData[COLS.COMMENT - 1] || '',
     };
 
     UrlFetchApp.fetch(WEBHOOK_URL, {
@@ -140,7 +117,6 @@ function onSheetEdit(e) {
       muteHttpExceptions: true
     });
 
-    // Зберігаємо поточні номери рядків для відстеження видалень
     const props = PropertiesService.getScriptProperties();
     props.setProperty('row_numbers', JSON.stringify(getRowNumbers()));
 
