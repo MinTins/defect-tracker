@@ -35,7 +35,7 @@ function statusEmoji(status) {
 }
 
 function formatStatus(status) {
-  return `\`${status}\``;
+  return `_\`[${status}]\`_`;
 }
 
 function formatDate(dateStr) {
@@ -159,7 +159,7 @@ app.post('/slack/interactions', (req, res) => {
     appendToSheet(data).then(({ newNumber }) => {
       savedNumber = newNumber;
       // baseText — без статусу і емодзі, вони додаються при оновленні
-      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}\n*Товар:* ${data.product} (${data.lovespace_article || '—'})\n*Проблема:* _${data.defect}_`;
+      messageText = `*Брак #${newNumber}* | ${data.date} | *${data.manager}* | Замовл: *${data.order_num}* | Тел: ${data.phone}\n*Товар:* _${data.product}_ (${data.lovespace_article || '—'})\n*Проблема:* _${data.defect}_`;
       const initialStatus = 'Нова заявка';
       const initialEmoji = statusEmoji(initialStatus);
       // Повний текст: статус зверху, потім опис
@@ -414,7 +414,7 @@ app.post('/slack/row-update', async (req, res) => {
 
   // Товар з артикулами
   if (d.product) {
-    text += `\n*Товар:* ${d.product}`;
+    text += `\n*Товар:* _${d.product}_`;
     const arts = [d.art_ls, d.art_supplier].filter(Boolean);
     if (arts.length) text += ` (${arts.join(' | ')})`;
   }
